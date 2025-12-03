@@ -1,156 +1,155 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>全屏粒子沉浸展示</title>
     <style>
-        #canvas-container {
-            position: relative;
+        /* --- 关键修改 1：强制全屏黑底 --- */
+        body, html {
+            margin: 0;
+            padding: 0;
             width: 100%;
-            height: 500px;
-            background-color: #000;
-            overflow: hidden;
-            border-radius: 8px;
-            cursor: ew-resize; /* 提示左右拖动 */
+            height: 100%;
+            background-color: #000; /* 纯黑背景，解决留白问题 */
+            overflow: hidden; /* 隐藏滚动条 */
         }
-        canvas { display: block; width: 100%; height: 100%; }
-        
-        #ui-layer {
-            position: absolute; bottom: 20px; width: 100%; text-align: center;
-            color: #00ffff; font-family: monospace; font-size: 14px;
-            pointer-events: none; user-select: none;
-            text-shadow: 0 0 5px #00ffff;
+        canvas {
+            display: block; /* 消除 canvas 底部潜在的缝隙 */
+            /* canvas 的具体尺寸将由 JS 动态设置 */
         }
     </style>
 </head>
 <body>
-    <div id="canvas-container">
-        <canvas id="myCanvas"></canvas>
-        <div id="ui-layer">当前模式：纯原生 JS 引擎 (零依赖)<br>请左右移动鼠标控制粒子</div>
-    </div>
+    <canvas id="myCanvas"></canvas>
 
     <script>
-        // --- 这是一个手写的微型 3D 引擎，不需要 Three.js ---
-        
+        // --- 核心引擎 (纯原生 JS，修改为全屏适配版) ---
         const canvas = document.getElementById('myCanvas');
         const ctx = canvas.getContext('2d');
-        const container = document.getElementById('canvas-container');
+        
+        let width, height, centerX, centerY, fov;
 
-        // 适配屏幕分辨率
-        let width, height;
+        // --- 关键修改 3：动态调整尺寸以适应全屏 ---
         function resize() {
-            width = container.clientWidth;
-            height = container.clientHeight;
+            // 获取浏览器窗口的内部宽高
+            width = window.innerWidth;
+            height = window.innerHeight;
+            // 设置画布尺寸等于窗口尺寸
             canvas.width = width;
             canvas.height = height;
+            // 重新计算中心点和焦距
+            centerX = width / 2;
+            centerY = height / 2;
+            // 根据屏幕大小调整焦距 (Field of View)，保证视觉效果一致
+            fov = Math.min(width, height) * 0.8;
         }
+        // 监听窗口大小改变事件（适应屏幕旋转或缩放）
         window.addEventListener('resize', resize);
+        // 初始化时先执行一次
         resize();
 
-        // --- 1. 粒子系统数据 ---
-        const PARTICLE_COUNT = 800; // 纯 CPU 计算，数量不宜过多
+        // 粒子参数
         const particles = [];
-        
-        // 初始化粒子
-        for (let i = 0; i < PARTICLE_COUNT; i++) {
-            // 目标形态：球体
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos((Math.random() * 2) - 1);
-            const r = 100; // 半径
-            
-            const tx = r * Math.sin(phi) * Math.cos(theta);
-            const ty = r * Math.sin(phi) * Math.sin(theta);
-            const tz = r * Math.cos(phi);
+        // 稍微增加粒子数量以填充更大的屏幕
+        const PARTICLE_COUNT = 800; 
 
-            // 随机形态：散开
-            const rx = (Math.random() - 0.5) * 800;
-            const ry = (Math.random() - 0.5) * 800;
-            const rz = (Math.random() - 0.5) * 800;
-
+        // 初始化粒子数据
+        for(let i=0; i<PARTICLE_COUNT; i++) {
             particles.push({
-                x: rx, y: ry, z: rz,      // 当前位置
-                tx: tx, ty: ty, tz: tz,   // 目标位置(球)
-                rx: rx, ry: ry, rz: rz,   // 散开位置(源)
-                size: Math.random() * 2 + 1,
-                color: `hsl(${Math.random() * 60 + 180}, 100%, 70%)` // 蓝青色系
+                // 目标位置 (球体形态)
+                tx: (Math.random()-0.5) * 250, 
+                ty: (Math.random()-0.5) * 250, 
+                tz: (Math.random()-0.5) * 250,
+                // 散开位置 (乱序，范围加大适应全屏)
+                rx: (Math.random()-0.5) * 1500,
+                ry: (Math.random()-0.5) * 1500,
+                rz: (Math.random()-0.5) * 1500,
+                // 颜色采用截图中那种蓝紫色调
+                color: `hsl(${Math.random()*60 + 190}, 100%, 65%)`,
+                baseSize: Math.random() * 2 + 0.5 // 基础大小
             });
         }
 
-        // --- 2. 交互逻辑 ---
-        let mouseRatio = 0; // 0 (左) ~ 1 (右)
-        
-        container.addEventListener('mousemove', (e) => {
-            const rect = container.getBoundingClientRect();
-            let x = (e.clientX - rect.left) / rect.width;
-            mouseRatio = Math.max(0, Math.min(1, x));
-        });
+        // 修正为更标准的球体分布
+        for(let p of particles) {
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos((Math.random() * 2) - 1);
+            const r = 180; // 球体半径
+            p.tx = r * Math.sin(phi) * Math.cos(theta);
+            p.ty = r * Math.sin(phi) * Math.sin(theta);
+            p.tz = r * Math.cos(phi);
+        }
 
-        // --- 3. 渲染循环 ---
+        // 交互状态
+        let mouseXRatio = 0.5; // 默认在中间
+
+        // 鼠标移动监听
+        window.addEventListener('mousemove', e => {
+            mouseXRatio = e.clientX / width;
+        });
+        // 增加移动端触摸滑动支持
+        window.addEventListener('touchmove', e => {
+             if(e.touches.length > 0) {
+                // 阻止默认滚动行为
+                e.preventDefault();
+                mouseXRatio = e.touches[0].clientX / width;
+             }
+        }, { passive: false });
+
+        // 动画循环
         let angle = 0;
-        let currentProgress = 0; // 当前聚拢进度
+        let currentProgress = 0.5;
 
         function animate() {
-            // 清空画布
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)'; // 拖尾效果
+            // 使用半透明黑色清空画布，制造拖尾效果
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
             ctx.fillRect(0, 0, width, height);
 
-            // 自动旋转
-            angle += 0.01;
+            angle += 0.003; // 缓慢旋转
             const sin = Math.sin(angle);
             const cos = Math.cos(angle);
-
-            // 平滑插值交互 (目标：鼠标越右，进度越大，粒子越聚拢)
-            // 修改逻辑：鼠标向右(1) = 聚拢，向左(0) = 散开
-            // 但为了效果明显，我们设 1 为球体，0 为散开
-            let target = mouseRatio; 
-            currentProgress += (target - currentProgress) * 0.05;
-
-            // 遍历渲染每个粒子
-            // 焦距 (FOV)
-            const fov = 600; 
-            const viewDistance = 500;
-
+            
+            // 平滑插值交互值
+            currentProgress += (mouseXRatio - currentProgress) * 0.05;
+            
+            // 绘制粒子
             for (let i = 0; i < PARTICLE_COUNT; i++) {
                 const p = particles[i];
 
-                // 1. 计算插值位置 (Lerp)
-                // 进度 0 = rx (散开), 进度 1 = tx (球体)
-                // 增加一点噪点让运动更自然
-                const k = currentProgress;
-                let cx = p.rx + (p.tx - p.rx) * k;
-                let cy = p.ry + (p.ty - p.ry) * k;
-                let cz = p.rz + (p.tz - p.rz) * k;
+                // 计算当前位置 (插值)
+                let cx = p.rx + (p.tx - p.rx) * currentProgress;
+                let cy = p.ry + (p.ty - p.ry) * currentProgress;
+                let cz = p.rz + (p.tz - p.rz) * currentProgress;
 
-                // 2. 绕 Y 轴旋转 (3D 矩阵变换)
-                // x' = x*cos - z*sin
-                // z' = z*cos + x*sin
-                const rotX = cx * cos - cz * sin;
-                const rotZ = cz * cos + cx * sin;
-                const rotY = cy;
+                // 绕Y轴旋转
+                let rotX = cx * cos - cz * sin;
+                let rotZ = cz * cos + cx * sin;
+                let rotY = cy;
 
-                // 3. 3D 透视投影 (核心算法)
-                // 越远(z越大)，scale越小
-                // z 坐标系：正值在屏幕内，负值在屏幕外
-                const scale = fov / (viewDistance + rotZ);
-                
-                // 如果粒子在视野后方，不绘制
-                if (scale < 0) continue;
+                // 3D透视投影核心公式
+                // 摄像机位于 z = -fov 处
+                const scale = fov / (fov + rotZ);
 
-                const screenX = rotX * scale + width / 2;
-                const screenY = rotY * scale + height / 2;
+                // 只绘制在摄像机前方的粒子
+                if (scale > 0) {
+                    const screenX = rotX * scale + centerX;
+                    const screenY = rotY * scale + centerY;
+                    
+                    // 根据距离调整粒子大小
+                    const size = p.baseSize * scale;
 
-                // 4. 绘制
-                ctx.beginPath();
-                // 根据距离调整大小
-                const size = p.size * scale * (0.5 + currentProgress); 
-                ctx.arc(screenX, screenY, size, 0, Math.PI * 2);
-                ctx.fillStyle = p.color;
-                ctx.fill();
+                    ctx.beginPath();
+                    ctx.fillStyle = p.color;
+                    ctx.arc(screenX, screenY, size, 0, Math.PI*2);
+                    ctx.fill();
+                }
             }
-
             requestAnimationFrame(animate);
         }
-
+        
+        // 启动动画
         animate();
     </script>
 </body>
-
 </html>
