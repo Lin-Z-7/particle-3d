@@ -1,141 +1,264 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="3D粒子">
-
-    <title>3D粒子</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Three.js 粒子手势交互系统</title>
     <style>
-        /* 强制全屏，去除一切边距 */
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            background-color: #000;
-            overflow: hidden;
-            /* 禁止选中文字，防止长按出现菜单 */
-            -webkit-user-select: none;
-            user-select: none;
-            /* 消除触摸延迟 */
-            touch-action: none; 
-        }
-        canvas {
-            display: block;
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        canvas { display: block; }
+        #instruction {
             position: absolute;
-            top: 0;
-            left: 0;
-            z-index: 1;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 105, 180, 0.8);
+            font-family: 'Arial', sans-serif;
+            font-size: 14px;
+            pointer-events: none;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px 20px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 105, 180, 0.3);
         }
     </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
 </head>
 <body>
-    <canvas id="myCanvas"></canvas>
+    <div id="instruction">↔ 左右滑动鼠标控制粒子 聚拢 / 扩散 <br> (双击屏幕全屏)</div>
 
-    <script>
-        const canvas = document.getElementById('myCanvas');
-        const ctx = canvas.getContext('2d');
-        
-        let width, height, centerX, centerY, fov;
+    <script type="module">
+        import * as THREE from 'three';
+        import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-        function resize() {
-            // 强制获取屏幕的物理像素宽高，确保覆盖全屏
-            width = window.innerWidth;
-            height = window.innerHeight;
-            canvas.width = width;
-            canvas.height = height;
-            centerX = width / 2;
-            centerY = height / 2;
-            fov = Math.min(width, height) * 0.9; // 调整视野
-        }
-        
-        window.addEventListener('resize', resize);
-        window.addEventListener('orientationchange', () => { setTimeout(resize, 100); }); // 修复iPad旋转延迟
-        resize();
+        // --- 1. 场景初始化 ---
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.002); // 添加雾效增加深邃感
 
-        // 粒子系统
-        const particles = [];
-        const PARTICLE_COUNT = 1000; // iPad 性能好，增加粒子数
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.z = 50;
 
-        for(let i=0; i<PARTICLE_COUNT; i++) {
-            particles.push({
-                tx: (Math.random()-0.5) * 300, 
-                ty: (Math.random()-0.5) * 300, 
-                tz: (Math.random()-0.5) * 300,
-                rx: (Math.random()-0.5) * 2000,
-                ry: (Math.random()-0.5) * 2000,
-                rz: (Math.random()-0.5) * 2000,
-                color: `hsl(${Math.random()*60 + 190}, 100%, 60%)`,
-                baseSize: Math.random() * 2 + 1
-            });
-        }
-        
-        // 设为球体
-        for(let p of particles) {
-            const theta = Math.random() * Math.PI * 2;
-            const phi = Math.acos((Math.random() * 2) - 1);
-            const r = 220; 
-            p.tx = r * Math.sin(phi) * Math.cos(theta);
-            p.ty = r * Math.sin(phi) * Math.sin(theta);
-            p.tz = r * Math.cos(phi);
-        }
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
 
-        let mouseXRatio = 0.5;
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.enableZoom = false; // 禁用缩放，以免与粒子缩放逻辑冲突
 
-        // 兼容 iPad 的触摸控制
-        const handleTouch = (e) => {
-            e.preventDefault(); // 阻止浏览器默认滚动
-            if(e.touches.length > 0) {
-                mouseXRatio = e.touches[0].clientX / width;
+        // --- 2. 粒子系统核心逻辑 ---
+        const particleCount = 15000;
+        const geometry = new THREE.BufferGeometry();
+        const initialPositions = new Float32Array(particleCount * 3);
+        const positions = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+
+        // 配置参数
+        const params = {
+            color: '#ff69b4', // 默认粉色 (HotPink)
+            size: 0.15,
+            shape: 'Sphere', // 初始形状
+            dispersion: 1.0, // 扩散程度
+            autoRotate: true
+        };
+
+        // 形状生成器函数
+        const shapeGenerators = {
+            'Sphere': (i) => {
+                const r = 20 * Math.cbrt(Math.random());
+                const theta = Math.random() * 2 * Math.PI;
+                const phi = Math.acos(2 * Math.random() - 1);
+                return {
+                    x: r * Math.sin(phi) * Math.cos(theta),
+                    y: r * Math.sin(phi) * Math.sin(theta),
+                    z: r * Math.cos(phi)
+                };
+            },
+            'Cube': (i) => {
+                const s = 30;
+                return {
+                    x: (Math.random() - 0.5) * s,
+                    y: (Math.random() - 0.5) * s,
+                    z: (Math.random() - 0.5) * s
+                };
+            },
+            'Galaxy': (i) => {
+                const angle = Math.random() * Math.PI * 2;
+                const radius = 10 + Math.random() * 20;
+                const spiralOffset = radius * 0.5; // 螺旋因子
+                return {
+                    x: Math.cos(angle + spiralOffset) * radius,
+                    y: (Math.random() - 0.5) * 5, //扁平化
+                    z: Math.sin(angle + spiralOffset) * radius
+                };
             }
         };
-        
-        window.addEventListener('mousemove', e => { mouseXRatio = e.clientX / width; });
-        window.addEventListener('touchmove', handleTouch, { passive: false });
-        window.addEventListener('touchstart', handleTouch, { passive: false });
 
-        let angle = 0;
-        let currentProgress = 0.5;
+        // 初始化粒子位置
+        function initParticles(shapeType) {
+            const generator = shapeGenerators[shapeType];
+            const colorObj = new THREE.Color(params.color);
+
+            for (let i = 0; i < particleCount; i++) {
+                const pos = generator(i);
+                
+                // 存储初始位置（用于计算基准）
+                initialPositions[i * 3] = pos.x;
+                initialPositions[i * 3 + 1] = pos.y;
+                initialPositions[i * 3 + 2] = pos.z;
+
+                // 当前位置
+                positions[i * 3] = pos.x;
+                positions[i * 3 + 1] = pos.y;
+                positions[i * 3 + 2] = pos.z;
+
+                // 颜色
+                colors[i * 3] = colorObj.r;
+                colors[i * 3 + 1] = colorObj.g;
+                colors[i * 3 + 2] = colorObj.b;
+            }
+            
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.attributes.position.needsUpdate = true;
+            geometry.attributes.color.needsUpdate = true;
+        }
+
+        initParticles(params.shape);
+
+        // 材质
+        const material = new THREE.PointsMaterial({
+            size: params.size,
+            vertexColors: true,
+            blending: THREE.AdditiveBlending,
+            depthTest: false,
+            transparent: true,
+            opacity: 0.8
+        });
+
+        const particles = new THREE.Points(geometry, material);
+        scene.add(particles);
+
+        // --- 3. 交互逻辑：鼠标滑动模拟手势 ---
+        let targetDispersion = 1.0; // 目标扩散值
+        
+        // 监听鼠标移动
+        document.addEventListener('mousemove', (event) => {
+            // 将屏幕 X 坐标 映射到 [0, 2] 之间
+            // 左边是 0 (收缩)，中间是 1 (正常)，右边是 2+ (扩散)
+            const xRatio = event.clientX / window.innerWidth;
+            
+            // 映射逻辑：左侧聚拢(0.1)，右侧发散(3.0)
+            targetDispersion = 0.1 + (xRatio * 3.0);
+        });
+
+        // 全屏逻辑
+        window.addEventListener('dblclick', () => {
+            const fullscreenElement = document.fullscreenElement || document.webkitFullscreenElement;
+            if (!fullscreenElement) {
+                if (document.body.requestFullscreen) document.body.requestFullscreen();
+                else if (document.body.webkitRequestFullscreen) document.body.webkitRequestFullscreen();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+            }
+        });
+
+        // --- 4. UI 面板 (lil-gui) ---
+        const gui = new GUI({ title: '粒子控制台' });
+        
+        // 颜色控制
+        gui.addColor(params, 'color').name('粒子颜色').onChange((value) => {
+            const colorObj = new THREE.Color(value);
+            const colorsAttr = geometry.attributes.color;
+            for (let i = 0; i < particleCount; i++) {
+                colorsAttr.setXYZ(i, colorObj.r, colorObj.g, colorObj.b);
+            }
+            colorsAttr.needsUpdate = true;
+        });
+
+        // 形状切换
+        gui.add(params, 'shape', ['Sphere', 'Cube', 'Galaxy']).name('图案模型').onChange((val) => {
+            initParticles(val);
+        });
+
+        // 粒子大小
+        gui.add(params, 'size', 0.05, 0.5).name('粒子大小').onChange((val) => {
+            material.size = val;
+        });
+
+        // 自动旋转开关
+        gui.add(params, 'autoRotate').name('自动旋转');
+        
+        // 增加全屏按钮
+        const obj = { toggleFullscreen: function() { 
+             if (!document.fullscreenElement) document.body.requestFullscreen();
+             else document.exitFullscreen();
+        }};
+        gui.add(obj, 'toggleFullscreen').name('全屏切换 [双击]');
+
+
+        // --- 5. 动画循环 ---
+        const clock = new THREE.Clock();
 
         function animate() {
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.25)'; // 拖尾更长一点
-            ctx.fillRect(0, 0, width, height);
-
-            angle += 0.003;
-            const sin = Math.sin(angle);
-            const cos = Math.cos(angle);
-            
-            currentProgress += (mouseXRatio - currentProgress) * 0.08;
-            
-            for (let i = 0; i < PARTICLE_COUNT; i++) {
-                const p = particles[i];
-                let k = currentProgress;
-                
-                let cx = p.rx + (p.tx - p.rx) * k;
-                let cy = p.ry + (p.ty - p.ry) * k;
-                let cz = p.rz + (p.tz - p.rz) * k;
-
-                let rotX = cx * cos - cz * sin;
-                let rotZ = cz * cos + cx * sin;
-                let rotY = cy;
-
-                const scale = fov / (fov + rotZ);
-
-                if (scale > 0) {
-                    const x = rotX * scale + centerX;
-                    const y = rotY * scale + centerY;
-                    ctx.beginPath();
-                    ctx.fillStyle = p.color;
-                    ctx.arc(x, y, p.baseSize * scale, 0, Math.PI*2);
-                    ctx.fill();
-                }
-            }
             requestAnimationFrame(animate);
+            
+            const time = clock.getElapsedTime();
+
+            // 平滑插值：让当前的 dispersion 慢慢接近 targetDispersion (实现类似手势的阻尼感)
+            params.dispersion += (targetDispersion - params.dispersion) * 0.05;
+
+            // 更新粒子位置
+            const positions = geometry.attributes.position.array;
+            
+            for (let i = 0; i < particleCount; i++) {
+                const ix = i * 3;
+                const iy = i * 3 + 1;
+                const iz = i * 3 + 2;
+
+                // 获取初始位置
+                const ox = initialPositions[ix];
+                const oy = initialPositions[iy];
+                const oz = initialPositions[iz];
+
+                // 核心逻辑：基于初始位置 * 扩散系数
+                // 添加一点点基于时间的微弱浮动，让粒子看起来是活的
+                const floatOffset = Math.sin(time + ox * 0.5) * 0.2;
+
+                positions[ix] = ox * params.dispersion;
+                positions[iy] = oy * params.dispersion + floatOffset;
+                positions[iz] = oz * params.dispersion;
+            }
+
+            geometry.attributes.position.needsUpdate = true;
+
+            // 整体旋转
+            if (params.autoRotate) {
+                particles.rotation.y += 0.002;
+            }
+
+            controls.update();
+            renderer.render(scene, camera);
         }
+
+        // 窗口大小自适应
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
         animate();
     </script>
 </body>
